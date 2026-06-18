@@ -3,11 +3,11 @@ const axios = require('axios');
 const fs = require('fs');
 const http = require('http');
 
-// --- Configuration ---
-const BOT_TOKEN = '8986252320:AAH5AxgU2hfQP9e-H3-yAjbGXq9V7Xqzays';
-const ADMIN_ID = 7220300785;
-const WEATHER_API_KEY = '5c8dca5928cec7d66c226df2402bca12';
-const AI_API_KEY = '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';
+// --- Configuration (Берем из переменных окружения) ---
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const ADMIN_ID = parseInt(process.env.ADMIN_ID); 
+const WEATHER_API_KEY = process.env.WEATHER_API_KEY;
+const AI_API_KEY = process.env.AI_API_KEY;
 
 const bot = new Telegraf(BOT_TOKEN);
 bot.use(session()); // Enable sessions for state management
