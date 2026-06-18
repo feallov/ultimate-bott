@@ -294,23 +294,30 @@ bot.on('text', async (ctx) => {
     return;
   }
 
-  if (state === 'WAIT_AI') {
-    ctx.reply('⏳ Думаю...');
+    if (state === 'WAIT_AI') {
+    ctx.reply('⏳ Секундочку, думаю...');
     try {
       const res = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
-        model: 'google/gemma-7b-it:free',
+        model: 'meta-llama/llama-3-8b-instruct:free', // Очень мощная и бесплатная модель
         messages: [{ role: 'user', content: ctx.message.text }]
       }, {
-        headers: { 'Authorization': `Bearer ${AI_API_KEY}`, 'Content-Type': 'application/json' }
+        headers: { 
+          'Authorization': `Bearer ${AI_API_KEY}`, 
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://render.com', // Обязательно для некоторых моделей
+          'X-Title': 'MultiBot Telegram'
+        }
       });
-      ctx.reply(res.data.choices[0].message.content, mainMenu);
+      
+      const aiResponse = res.data.choices[0]?.message?.content || "ИИ прислал пустой ответ.";
+      ctx.reply(aiResponse, mainMenu);
     } catch (e) {
-      ctx.reply('❌ Ошибка ИИ. Проверьте баланс или ключ API.', mainMenu);
+      console.error("AI Error:", e.response?.data || e.message);
+      ctx.reply('❌ Ошибка ИИ. Скорее всего, новый ключ еще не активировался или выбранная модель недоступна. Попробуйте через 5 минут.', mainMenu);
     }
     ctx.session = null;
     return;
   }
-});
 
 // --- Web Server for Render ---
 const PORT = process.env.PORT || 3000;
