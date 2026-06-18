@@ -4,7 +4,7 @@ const fs = require('fs');
 const http = require('http');
 
 // --- Configuration ---
-const BOT_TOKEN = '8986252320:AAFSOFrswuhs2eiGHJMY8Ie3IC5qjJG2sHw';
+const BOT_TOKEN = '8986252320:AAH5AxgU2hfQP9e-H3-yAjbGXq9V7Xqzays';
 const ADMIN_ID = 7220300785;
 const WEATHER_API_KEY = '5c8dca5928cec7d66c226df2402bca12';
 const AI_API_KEY = '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';
