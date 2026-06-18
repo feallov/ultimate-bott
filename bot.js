@@ -3,111 +3,121 @@ const axios = require('axios');
 const fs = require('fs');
 const http = require('http');
 
-// --- Configuration (Берем из переменных окружения Render) ---
+// --- Configuration (Берем из Render Environment) ---
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const ADMIN_ID = parseInt(process.env.ADMIN_ID);
 const WEATHER_API_KEY = process.env.WEATHER_API_KEY;
-const AI_API_KEY = process.env.AI_API_KEY;
 
 const bot = new Telegraf(BOT_TOKEN);
 bot.use(session());
 
-// --- Simple JSON Database ---
+// --- Database Logic ---
 const DB_FILE = './db.json';
-let db = {
-  users: {},
-  settings: { maintenance: false, ai_enabled: true }
-};
-
+let db = { users: {}, settings: { maintenance: false } };
 if (fs.existsSync(DB_FILE)) {
-  try {
-    db = JSON.parse(fs.readFileSync(DB_FILE));
-  } catch (e) { console.error("DB Parse Error", e); }
+  try { db = JSON.parse(fs.readFileSync(DB_FILE)); } catch (e) { console.error("DB Load Error"); }
 }
-
 const saveDb = () => fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
 
-// --- Middleware: Auth & Tracking ---
+// --- Middleware ---
 bot.use((ctx, next) => {
   if (!ctx.from) return next();
   const uid = ctx.from.id;
-
   if (!db.users[uid]) {
-    db.users[uid] = {
-      username: ctx.from.username || 'n/a',
-      first_name: ctx.from.first_name,
-      joined: new Date().toISOString(),
-      isBanned: false,
-      trollMode: null,
-      messagesSent: 0
-    };
+    db.users[uid] = { first_name: ctx.from.first_name, username: ctx.from.username || 'n/a', joined: new Date().toISOString(), isBanned: false, trollMode: null, messagesSent: 0 };
     saveDb();
   }
-
-  const user = db.users[uid];
-  user.messagesSent++;
+  db.users[uid].messagesSent++;
   saveDb();
-
-  if (user.isBanned && uid !== ADMIN_ID) {
-    return ctx.reply('🛑 Вы заблокированы.');
-  }
-
-  if (db.settings.maintenance && uid !== ADMIN_ID) {
-    return ctx.reply('🛠 Бот на техническом обслуживании. Зайдите позже.');
-  }
-
+  if (db.users[uid].isBanned && uid !== ADMIN_ID) return ctx.reply('🛑 Доступ заблокирован администратором.');
   return next();
 });
 
 // --- Menus ---
 const mainMenu = Markup.keyboard([
-  ['🌤 Погода', '🤖 ИИ Агент'],
-  ['💱 Курсы Валют', '⏰ Напоминалка'],
+  ['🌤 Погода', '📖 Википедия'],
+  ['💱 Валюты & Крипто', '⏰ Напоминалка'],
   ['🔑 Пароли', '🎲 Рандом'],
   ['👤 Профиль', 'ℹ️ Помощь']
 ]).resize();
 
-const adminHomeMenu = Markup.inlineKeyboard([
-  [Markup.button.callback('👥 Управление Юзерами', 'adm_users_list')],
-  [Markup.button.callback('📢 Массовая Рассылка', 'adm_broadcast')],
-  [Markup.button.callback('⚙️ Системные Настройки', 'adm_settings')],
-  [Markup.button.callback('📊 Статистика БД', 'adm_stats')]
-]);
+bot.start((ctx) => ctx.reply(`👋 Привет, ${ctx.from.first_name}! Я твой ультимативный бот.\nВыбери нужную функцию в меню ниже.`, mainMenu));
 
-// --- Main Handlers ---
-bot.start((ctx) => {
-  ctx.reply(`👋 Привет, ${ctx.from.first_name}! Я твой универсальный бот.\n\nИспользуй кнопки ниже для навигации.`, mainMenu);
-});
+// --- Handlers ---
 
+// 🌤 WEATHER
 bot.hears('🌤 Погода', (ctx) => {
-  ctx.reply('Напишите название города (например: Москва или London):');
+  ctx.reply('Введите название города на русском или английском:');
   ctx.session = { state: 'WAIT_WEATHER' };
 });
 
-bot.hears('🤖 ИИ Агент', (ctx) => {
-  if (!db.settings.ai_enabled) return ctx.reply('❌ ИИ временно отключен администратором.');
-  ctx.reply('Отправьте ваш вопрос для ИИ (Llama-3 Free):');
-  ctx.session = { state: 'WAIT_AI' };
+// 📖 WIKIPEDIA
+bot.hears('📖 Википедия', (ctx) => {
+  ctx.reply('🔍 Напишите тему для поиска в Википедии:');
+  ctx.session = { state: 'WAIT_WIKI' };
 });
 
-bot.hears('💱 Курсы Валют', async (ctx) => {
+// 💱 CURRENCY & CRYPTO
+bot.hears('💱 Валюты & Крипто', async (ctx) => {
+  ctx.reply('⏳ Загружаю актуальные данные...');
   try {
-    const res = await axios.get('https://api.exchangerate-api.com/v4/latest/USD');
-    const rub = res.data.rates.RUB;
-    const eurInUsd = res.data.rates.EUR;
-    const eurToRub = (rub / eurInUsd).toFixed(2);
-    ctx.reply(`📊 *Актуальные курсы (к рублю):*\n\n🇺🇸 USD: \`${rub}\` ₽\n🇪🇺 EUR: \`${eurToRub}\` ₽`, { parse_mode: 'Markdown' });
-  } catch (e) { ctx.reply('❌ Ошибка получения валют.'); }
+    const fiat = await axios.get('https://api.exchangerate-api.com/v4/latest/USD');
+    const rub = fiat.data.rates.RUB;
+    const cny = (rub / fiat.data.rates.CNY).toFixed(2);
+    const kzt = (rub / fiat.data.rates.KZT).toFixed(2);
+    
+    const crypto = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,the-open-network&vs_currencies=usd');
+    
+    const text = `📊 *Курсы Валют (к рублю):*\n` +
+                 `🇺🇸 USD: \`${rub}\` ₽\n` +
+                 `🇪🇺 EUR: \`${(rub / fiat.data.rates.EUR).toFixed(2)}\` ₽\n` +
+                 `🇨🇳 CNY: \`${cny}\` ₽\n` +
+                 `🇰🇿 100 KZT: \`${(kzt * 100).toFixed(2)}\` ₽\n\n` +
+                 `🚀 *Криптовалюта (в USD):*\n` +
+                 `₿ BTC: \`$${crypto.data.bitcoin.usd}\`\n` +
+                 `💎 TON: \`$${crypto.data['the-open-network'].usd}\`\n` +
+                 `🔷 ETH: \`$${crypto.data.ethereum.usd}\``;
+    
+    ctx.reply(text, { parse_mode: 'Markdown' });
+  } catch (e) {
+    ctx.reply('❌ Ошибка получения данных. Попробуйте позже.');
+  }
 });
 
+// 🔑 PASSWORDS WITH FILTERS
+bot.hears('🔑 Пароли', (ctx) => {
+  ctx.reply('Выберите тип пароля:', Markup.inlineKeyboard([
+    [Markup.button.callback('🔢 Только цифры', 'gen_pass_num')],
+    [Markup.button.callback('🔤 Буквы + Цифры', 'gen_pass_mix')],
+    [Markup.button.callback('🛡 Сложный (со спецсимв.)', 'gen_pass_hard')]
+  ]));
+});
+
+bot.action(/gen_pass_(\w+)/, (ctx) => {
+  const type = ctx.match[1];
+  let charset = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  if (type === 'num') charset = "01234567890123456789";
+  if (type === 'hard') charset += "!@#$%^&*()_+=-[]{}|;:,.<>?";
+  
+  const pass = Array.from({length: 12}, () => charset[Math.floor(Math.random() * charset.length)]).join('');
+  ctx.answerCbQuery('Пароль сгенерирован!');
+  ctx.reply(`🔑 Ваш новый пароль:\n\`${pass}\``, { parse_mode: 'Markdown' });
+});
+
+// 🎲 RANDOM
 bot.hears('🎲 Рандом', (ctx) => {
-  const facts = ["Осьминоги имеют три сердца.", "Мед не портится.", "У коал есть отпечатки пальцев."];
-  const fact = facts[Math.floor(Math.random() * facts.length)];
-  ctx.reply(`🎲 Число: ${Math.floor(Math.random()*100)}\n💡 Факт: ${fact}`);
+  const facts = [
+    "Сердце кита размером с автомобиль.",
+    "У осьминога 3 сердца.",
+    "Мед не портится тысячи лет.",
+    "Коалы спят по 22 часа в сутки."
+  ];
+  ctx.reply(`🎲 Число: *${Math.floor(Math.random()*100)+1}*\n💡 Факт: ${facts[Math.floor(Math.random()*facts.length)]}`, { parse_mode: 'Markdown' });
 });
 
+// ⏰ REMINDERS
 bot.hears('⏰ Напоминалка', (ctx) => {
-  ctx.reply('Формат: `напомни через 5 минут купить хлеб`', { parse_mode: 'Markdown' });
+  ctx.reply('Напиши: `напомни через 10 минут выпить воды`', { parse_mode: 'Markdown' });
 });
 
 bot.hears(/напомни через (\d+) (минут|минуту|минуты|час|часа|часов)/i, (ctx) => {
@@ -115,108 +125,91 @@ bot.hears(/напомни через (\d+) (минут|минуту|минуты
   const unit = ctx.match[2];
   let ms = amount * 60000;
   if (unit.startsWith('час')) ms *= 60;
-  const text = ctx.message.text.split(' ').slice(4).join(' ') || 'Время вышло!';
-  setTimeout(() => { bot.telegram.sendMessage(ctx.from.id, `🔔 *НАПОМИНАНИЕ:* ${text}`, { parse_mode: 'Markdown' }); }, ms);
-  ctx.reply(`✅ Напомню через ${amount} ${unit}.`);
+  
+  const note = ctx.message.text.split(' ').slice(4).join(' ') || 'Время вышло!';
+  setTimeout(() => {
+    ctx.reply(`🔔 *НАПОМИНАНИЕ:* ${note}`, { parse_mode: 'Markdown' });
+  }, ms);
+  ctx.reply(`✅ Ок! Напомню через ${amount} ${unit}.`);
 });
 
-bot.hears('🔑 Пароли', (ctx) => {
-  const gen = (l) => Array.from({length:l},()=>"abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%^&*"[Math.floor(Math.random()*60)]).join('');
-  ctx.reply(`🔑 12 симв: \`${gen(12)}\``, { parse_mode: 'Markdown' });
-});
-
+// 👤 PROFILE
 bot.hears('👤 Профиль', (ctx) => {
-  const user = db.users[ctx.from.id];
-  ctx.reply(`👤 ID: ${ctx.from.id}\n✉️ Сообщений: ${user.messagesSent}`);
+  const u = db.users[ctx.from.id];
+  ctx.reply(`👤 *Ваш профиль:*\n🆔 ID: \`${ctx.from.id}\`\n✉️ Сообщений отправлено: ${u.messagesSent}`, { parse_mode: 'Markdown' });
 });
 
-// --- Admin Logic ---
+// ℹ️ HELP
+bot.hears('ℹ️ Помощь', (ctx) => {
+  ctx.reply('Этот бот умеет всё! Если есть вопросы — пиши админу.');
+});
+
+// --- Admin Section ---
 bot.command('admin', (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return ctx.reply('⛔️ Доступ закрыт.');
-  ctx.reply('🔧 Админ-панель:', adminHomeMenu);
+  if (ctx.from.id !== ADMIN_ID) return ctx.reply('⛔️ Доступ только для Хозяина.');
+  ctx.reply('🔧 *Админ-панель:*', {
+    parse_mode: 'Markdown',
+    ...Markup.inlineKeyboard([
+      [Markup.button.callback('👥 Список пользователей', 'adm_users')],
+      [Markup.button.callback('📢 Сделать рассылку', 'adm_bc')]
+    ])
+  });
 });
 
-bot.action('adm_users_list', (ctx) => {
-  const buttons = Object.entries(db.users).slice(0, 10).map(([id, u]) => [Markup.button.callback(`${u.first_name} (${id})`, `inspect_${id}`)]);
-  ctx.editMessageText('👥 Юзеры:', Markup.inlineKeyboard([...buttons, [Markup.button.callback('⬅️ Назад', 'adm_home')]]));
+bot.action('adm_users', (ctx) => {
+  const list = Object.entries(db.users).slice(-20).map(([id, u]) => `• ${u.first_name} [${id}] (Msg: ${u.messagesSent})`).join('\n');
+  ctx.editMessageText(`👥 *Последние пользователи:*\n\n${list}`, {
+    parse_mode: 'Markdown',
+    ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Назад', 'adm_back')]])
+  });
 });
 
-bot.action(/inspect_(\d+)/, (ctx) => {
-  const targetId = ctx.match[1];
-  const u = db.users[targetId];
-  ctx.editMessageText(`👤 ${u.first_name}\n🆔 ${targetId}\n🤡 Троллинг: ${u.trollMode || 'Нет'}`, Markup.inlineKeyboard([
-    [Markup.button.callback(u.isBanned ? '✅ Разбанить' : '🚫 Забанить', `toggle_ban_${targetId}`)],
-    [Markup.button.callback('🤡 Троллинг', `troll_menu_${targetId}`)],
-    [Markup.button.callback('⬅️ Назад', 'adm_users_list')]
-  ]));
+bot.action('adm_back', (ctx) => {
+  ctx.editMessageText('🔧 *Админ-панель:*', {
+    parse_mode: 'Markdown',
+    ...Markup.inlineKeyboard([
+      [Markup.button.callback('👥 Список пользователей', 'adm_users')],
+      [Markup.button.callback('📢 Сделать рассылку', 'adm_bc')]
+    ])
+  });
 });
 
-bot.action(/troll_menu_(\d+)/, (ctx) => {
-  const targetId = ctx.match[1];
-  ctx.editMessageText(`🤡 Режим для ${targetId}:`, Markup.inlineKeyboard([
-    [Markup.button.callback('🔄 Реверс', `set_troll_${targetId}_reverse`) + Markup.button.callback('👻 Хоррор', `set_troll_${targetId}_scary`)],
-    [Markup.button.callback('🚫 Выключить', `set_troll_${targetId}_none`) + Markup.button.callback('⬅️ Назад', `inspect_${targetId}`)]
-  ]));
-});
-
-bot.action(/set_troll_(\d+)_(\w+)/, (ctx) => {
-  const targetId = ctx.match[1];
-  db.users[targetId].trollMode = ctx.match[2] === 'none' ? null : ctx.match[2];
-  saveDb();
-  ctx.answerCbQuery('Готово');
-  ctx.editMessageText('✅ Обновлено', Markup.inlineKeyboard([[Markup.button.callback('⬅️ Назад', `inspect_${targetId}`)]]));
-});
-
-bot.action(/toggle_ban_(\d+)/, (ctx) => {
-  const targetId = ctx.match[1];
-  db.users[targetId].isBanned = !db.users[targetId].isBanned;
-  saveDb();
-  ctx.editMessageText('✅ Статус изменен', Markup.inlineKeyboard([[Markup.button.callback('⬅️ Назад', `inspect_${targetId}`)]]));
-});
-
-bot.action('adm_home', (ctx) => ctx.editMessageText('🔧 Админ-панель:', adminHomeMenu));
-
-// --- Final Text Handler ---
+// --- Text Handler for States & Trolling ---
 bot.on('text', async (ctx) => {
   const uid = ctx.from.id;
   const user = db.users[uid];
   const state = ctx.session?.state;
 
+  // TROLLING
   if (user.trollMode && uid !== ADMIN_ID) {
     if (user.trollMode === 'reverse') return ctx.reply(ctx.message.text.split('').reverse().join(''));
-    if (user.trollMode === 'scary') return ctx.reply('Оглянись. Я за тобой наблюдаю... 👀');
+    if (user.trollMode === 'scary') return ctx.reply('Я вижу тебя через камеру... 👁');
   }
 
+  // STATES
   if (state === 'WAIT_WEATHER') {
     try {
       const res = await axios.get(`https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(ctx.message.text)}&appid=${WEATHER_API_KEY}&units=metric&lang=ru`);
-      ctx.reply(`🌤 ${res.data.name}: ${res.data.main.temp}°C, ${res.data.weather[0].description}`, mainMenu);
+      ctx.reply(`🌤 *${res.data.name}:* ${res.data.main.temp}°C\n💧 Влажность: ${res.data.main.humidity}%\n☁️ ${res.data.weather[0].description}`, { parse_mode: 'Markdown', ...mainMenu });
     } catch (e) { ctx.reply('❌ Город не найден.', mainMenu); }
     ctx.session = null;
-    return;
-  }
-
-  if (state === 'WAIT_AI') {
-    ctx.reply('⏳ Думаю...');
+  } 
+  else if (state === 'WAIT_WIKI') {
     try {
-      const res = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
-        model: 'meta-llama/llama-3-8b-instruct:free',
-        messages: [{ role: 'user', content: ctx.message.text }]
-      }, {
-        headers: { 'Authorization': `Bearer ${AI_API_KEY}`, 'HTTP-Referer': 'https://render.com', 'X-Title': 'MultiBot' }
-      });
-      ctx.reply(res.data.choices[0]?.message?.content || "Ошибка ответа.", mainMenu);
-    } catch (e) { ctx.reply('❌ Ошибка ИИ.', mainMenu); }
+      const res = await axios.get(`https://ru.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(ctx.message.text)}`);
+      if (res.data.extract) {
+        ctx.reply(`📖 *${res.data.title}*\n\n${res.data.extract}\n\n🔗 [Читать в Википедии](${res.data.content_urls.desktop.page})`, { parse_mode: 'Markdown', ...mainMenu });
+      } else { ctx.reply('❌ Ничего не найдено.', mainMenu); }
+    } catch (e) { ctx.reply('❌ Ошибка поиска.', mainMenu); }
     ctx.session = null;
-    return;
   }
 });
 
-// Web Server for Render
+// --- Server for Render ---
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => { res.writeHead(200); res.end('Alive'); }).listen(PORT);
+http.createServer((req, res) => { res.writeHead(200); res.end('Bot is Active'); }).listen(PORT);
 
-bot.launch().then(() => console.log('Bot started!'));
+bot.launch().then(() => console.log('✅ Bot is running!'));
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
