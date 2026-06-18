@@ -298,7 +298,7 @@ bot.on('text', async (ctx) => {
     ctx.reply('⏳ Думаю...');
     try {
       const res = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
-        model: 'openai/gpt-3.5-turbo',
+        model: 'google/gemma-7b-it:free',
         messages: [{ role: 'user', content: ctx.message.text }]
       }, {
         headers: { 'Authorization': `Bearer ${AI_API_KEY}`, 'Content-Type': 'application/json' }
